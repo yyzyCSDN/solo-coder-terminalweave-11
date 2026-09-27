@@ -1,6 +1,7 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
+from copy import deepcopy
 from threading import RLock
 from terminalweave.core.clock import ensure_utc, utc_now
 from terminalweave.core.errors import ValidationError, ConflictError
@@ -20,6 +21,9 @@ class StoredEvent:
         if not self.event_type.strip():
             raise ValidationError('event type required')
 
+def _detach(event: StoredEvent) -> StoredEvent:
+    return StoredEvent(event.stream_id, event.sequence, event.event_type, deepcopy(event.payload), event.occurred_at)
+
 class InMemoryEventStore:
 
     def __init__(self):
@@ -32,15 +36,15 @@ class InMemoryEventStore:
             current = stream[-1].sequence if stream else 0
             if current != expected_sequence:
                 raise ConflictError(f'stream {stream_id} expected {expected_sequence}, actual {current}')
-            event = StoredEvent(stream_id, current + 1, event_type, dict(payload), occurred_at or utc_now())
+            event = StoredEvent(stream_id, current + 1, event_type, deepcopy(payload), occurred_at or utc_now())
             stream.append(event)
-            return event
+            return _detach(event)
 
     def read(self, stream_id: str, after_sequence: int=0) -> tuple[StoredEvent, ...]:
         if after_sequence < 0:
             raise ValidationError('after_sequence cannot be negative')
         with self._lock:
-            return tuple((e for e in self._streams.get(stream_id, []) if e.sequence > after_sequence))
+            return tuple((_detach(e) for e in self._streams.get(stream_id, []) if e.sequence > after_sequence))
 
     def current_sequence(self, stream_id: str) -> int:
         with self._lock:
